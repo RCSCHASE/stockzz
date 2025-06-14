@@ -1,0 +1,345 @@
+#!/usr/bin/env python3
+"""
+Advanced Bulk Stock Analyzer with Screening and Filtering
+Analyze hundreds of stocks efficiently with custom filters
+"""
+
+import sys
+import os
+sys.path.append('py-stocks')
+
+from Stock import Stock
+import pandas as pd
+from datetime import datetime
+import time
+import json
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import requests
+
+class AdvancedStockAnalyzer:
+    def __init__(self):
+        self.results = {}
+        self.errors = {}
+        
+    def get_sp500_tickers(self):
+        """Get S&P 500 ticker list from web"""
+        try:
+            # Wikipedia S&P 500 list
+            url = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
+            tables = pd.read_html(url)
+            sp500_df = tables[0]
+            tickers = sp500_df['Symbol'].tolist()
+            # Clean up any special characters
+            tickers = [ticker.replace('.', '-') for ticker in tickers]
+            print(f"📈 Retrieved {len(tickers)} S&P 500 tickers")
+            return tickers
+        except Exception as e:
+            print(f"❌ Error getting S&P 500 list: {e}")
+            return self.get_default_tickers()
+    
+    def get_nasdaq100_tickers(self):
+        """Get NASDAQ 100 ticker list"""
+        # Manual list of major NASDAQ 100 stocks (simplified)
+        nasdaq100 = [
+            'AAPL', 'MSFT', 'AMZN', 'NVDA', 'GOOGL', 'GOOG', 'META', 'TSLA',
+            'AVGO', 'COST', 'NFLX', 'TMUS', 'CSCO', 'ADBE', 'PEP', 'TXN',
+            'QCOM', 'CMCSA', 'HON', 'AMGN', 'INTU', 'AMAT', 'BKNG', 'ADP',
+            'ISRG', 'GILD', 'MDLZ', 'ADI', 'VRTX', 'FISV', 'MU', 'REGN',
+            'CSX', 'ATVI', 'PYPL', 'KLAC', 'ORLY', 'MRVL', 'FTNT', 'NXPI'
+        ]
+        return nasdaq100
+    
+    def get_defense_tickers(self):
+        """Get defense and aerospace stock tickers"""
+        defense_stocks = [
+            'LMT', 'BA', 'RTX', 'GD', 'NOC', 'TXT', 'HII', 'LDOS',
+            'KTOS', 'AJRD', 'CW', 'HXL', 'TGI', 'MOG.A', 'WWD'
+        ]
+        return defense_stocks
+    
+    def get_default_tickers(self):
+        """Default set of popular stocks"""
+        return [
+            'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'TSLA', 'META', 'NVDA', 'LMT',
+            'BA', 'RTX', 'JPM', 'JNJ', 'V', 'PG', 'UNH', 'HD', 'DIS', 'PYPL',
+            'NFLX', 'CRM', 'ORCL', 'INTC', 'AMD', 'QCOM', 'TXN', 'COST'
+        ]
+    
+    def analyze_stock_safe(self, ticker):
+        """Thread-safe stock analysis with comprehensive error handling"""
+        try:
+            stock = Stock(ticker)
+            data = {
+                'ticker': ticker,
+                'timestamp': datetime.now().isoformat(),
+                'analysis_status': 'success'
+            }
+            
+            # Define all metrics to collect
+            metrics = {
+                'name': lambda: stock.get_name(),
+                'sector': lambda: stock.get_sector(),
+                'industry': lambda: stock.get_industry(),
+                'employees': lambda: stock.get_employees(),
+                'website': lambda: stock.get_website(),
+                'current_price': lambda: stock.get_current_price(),
+                'volume': lambda: stock.get_volume(),
+                'avg_volume': lambda: stock.get_average_volume(),
+                'dividend_yield': lambda: stock.get_dividend_yield(),
+                'day_high': lambda: stock.get_day_high(),
+                'day_low': lambda: stock.get_day_low(),
+                'week52_high': lambda: stock.get_52week_high(),
+                'week52_low': lambda: stock.get_52week_low()
+            }
+            
+            # Collect each metric safely
+            for metric_name, metric_func in metrics.items():
+                try:
+                    data[metric_name] = metric_func()
+                except Exception as e:
+                    data[metric_name] = 'N/A'
+                    data[f'{metric_name}_error'] = str(e)
+            
+            # Calculate derived metrics
+            self.calculate_derived_metrics(data)
+            
+            return data
+            
+        except Exception as e:
+            return {
+                'ticker': ticker,
+                'analysis_status': 'failed',
+                'error': str(e),
+                'timestamp': datetime.now().isoformat()
+            }
+    
+    def calculate_derived_metrics(self, data):
+        """Calculate additional metrics from collected data"""
+        try:
+            price = data.get('current_price')
+            high52 = data.get('week52_high')
+            low52 = data.get('week52_low')
+            day_high = data.get('day_high')
+            day_low = data.get('day_low')
+            volume = data.get('volume')
+            avg_volume = data.get('avg_volume')
+            
+            # Price vs 52-week range
+            if all(x != 'N/A' and x is not None for x in [price, high52, low52]):
+                try:
+                    price, high52, low52 = float(price), float(high52), float(low52)
+                    data['pct_from_52w_high'] = ((price - high52) / high52) * 100
+                    data['pct_from_52w_low'] = ((price - low52) / low52) * 100
+                    data['position_in_52w_range'] = ((price - low52) / (high52 - low52)) * 100
+                except:
+                    pass
+            
+            # Daily range analysis
+            if all(x != 'N/A' and x is not None for x in [price, day_high, day_low]):
+                try:
+                    price, day_high, day_low = float(price), float(day_high), float(day_low)
+                    data['daily_range_pct'] = ((day_high - day_low) / price) * 100
+                    data['position_in_daily_range'] = ((price - day_low) / (day_high - day_low)) * 100
+                except:
+                    pass
+            
+            # Volume analysis
+            if all(x != 'N/A' and x is not None for x in [volume, avg_volume]):
+                try:
+                    volume, avg_volume = float(volume), float(avg_volume)
+                    data['volume_vs_avg'] = (volume / avg_volume) * 100
+                except:
+                    pass
+                    
+        except Exception as e:
+            data['derived_metrics_error'] = str(e)
+    
+    def parallel_analysis(self, tickers, max_workers=10):
+        """Analyze stocks in parallel using ThreadPoolExecutor"""
+        print(f"🚀 Starting parallel analysis of {len(tickers)} stocks with {max_workers} workers...")
+        
+        start_time = time.time()
+        completed = 0
+        
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Submit all tasks
+            future_to_ticker = {executor.submit(self.analyze_stock_safe, ticker): ticker 
+                              for ticker in tickers}
+            
+            # Process completed tasks
+            for future in as_completed(future_to_ticker):
+                ticker = future_to_ticker[future]
+                completed += 1
+                
+                try:
+                    result = future.result()
+                    if result['analysis_status'] == 'success':
+                        self.results[ticker] = result
+                        print(f"✅ [{completed}/{len(tickers)}] {ticker}")
+                    else:
+                        self.errors[ticker] = result['error']
+                        print(f"❌ [{completed}/{len(tickers)}] {ticker} - {result['error']}")
+                        
+                except Exception as e:
+                    self.errors[ticker] = str(e)
+                    print(f"❌ [{completed}/{len(tickers)}] {ticker} - {str(e)}")
+        
+        end_time = time.time()
+        print(f"\n⏱️ Parallel analysis completed in {end_time - start_time:.2f} seconds")
+        print(f"✅ Success: {len(self.results)} | ❌ Errors: {len(self.errors)}")
+        
+        return self.results
+    
+    def create_stock_screener(self, filters):
+        """
+        Screen stocks based on custom criteria
+        
+        Example filters:
+        {
+            'min_price': 10,
+            'max_price': 500,
+            'min_volume': 1000000,
+            'sectors': ['Technology', 'Healthcare'],
+            'min_market_cap': 1000000000,
+            'min_dividend_yield': 0.02
+        }
+        """
+        if not self.results:
+            print("No data available for screening!")
+            return []
+        
+        screened_stocks = []
+        
+        for ticker, data in self.results.items():
+            passes_filters = True
+            
+            # Price filters
+            if 'min_price' in filters:
+                price = data.get('current_price')
+                if price == 'N/A' or price is None or float(price) < filters['min_price']:
+                    passes_filters = False
+                    continue
+            
+            if 'max_price' in filters:
+                price = data.get('current_price')
+                if price == 'N/A' or price is None or float(price) > filters['max_price']:
+                    passes_filters = False
+                    continue
+            
+            # Volume filters
+            if 'min_volume' in filters:
+                volume = data.get('avg_volume')
+                if volume == 'N/A' or volume is None or float(volume) < filters['min_volume']:
+                    passes_filters = False
+                    continue
+            
+            # Sector filter
+            if 'sectors' in filters:
+                sector = data.get('sector')
+                if sector not in filters['sectors']:
+                    passes_filters = False
+                    continue
+            
+            # Dividend yield filter
+            if 'min_dividend_yield' in filters:
+                dividend = data.get('dividend_yield')
+                if dividend == 'N/A' or dividend is None or float(dividend) < filters['min_dividend_yield']:
+                    passes_filters = False
+                    continue
+            
+            if passes_filters:
+                screened_stocks.append((ticker, data))
+        
+        return screened_stocks
+    
+    def export_results(self, format='csv', filename=None):
+        """Export results in various formats"""
+        if not self.results:
+            print("No results to export!")
+            return
+        
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        
+        if format.lower() == 'csv':
+            filename = filename or f"stock_analysis_{timestamp}.csv"
+            df = pd.DataFrame.from_dict(self.results, orient='index')
+            df.to_csv(filename, index=False)
+            print(f"📊 CSV exported to: {filename}")
+            
+        elif format.lower() == 'json':
+            filename = filename or f"stock_analysis_{timestamp}.json"
+            with open(filename, 'w') as f:
+                json.dump(self.results, f, indent=2, default=str)
+            print(f"📊 JSON exported to: {filename}")
+            
+        elif format.lower() == 'excel':
+            filename = filename or f"stock_analysis_{timestamp}.xlsx"
+            df = pd.DataFrame.from_dict(self.results, orient='index')
+            df.to_excel(filename, index=False)
+            print(f"📊 Excel exported to: {filename}")
+        
+        return filename
+
+def main():
+    """Main execution with multiple analysis strategies"""
+    print("🚀 ADVANCED BULK STOCK ANALYZER")
+    print("=" * 60)
+    
+    analyzer = AdvancedStockAnalyzer()
+    
+    # Choose your analysis strategy:
+    print("Select analysis type:")
+    print("1. S&P 500 stocks (500+ stocks)")
+    print("2. NASDAQ 100 stocks (~100 stocks)")
+    print("3. Defense/Aerospace focused (~15 stocks)")
+    print("4. Popular stocks (~25 stocks)")
+    
+    choice = input("Enter choice (1-4): ").strip()
+    
+    if choice == '1':
+        tickers = analyzer.get_sp500_tickers()
+        max_workers = 20  # More workers for larger dataset
+    elif choice == '2':
+        tickers = analyzer.get_nasdaq100_tickers()
+        max_workers = 15
+    elif choice == '3':
+        tickers = analyzer.get_defense_tickers()
+        max_workers = 10
+    else:
+        tickers = analyzer.get_default_tickers()
+        max_workers = 10
+    
+    # Run parallel analysis
+    results = analyzer.parallel_analysis(tickers, max_workers=max_workers)
+    
+    # Export results
+    analyzer.export_results('csv')
+    analyzer.export_results('json')
+    
+    # Screen for interesting stocks
+    print("\n🔍 SCREENING RESULTS")
+    print("=" * 40)
+    
+    # Example screens
+    screens = {
+        "High Volume (>5M avg)": {'min_volume': 5000000},
+        "Mid-cap ($50-500)": {'min_price': 50, 'max_price': 500},
+        "Tech Stocks": {'sectors': ['Technology']},
+        "Near 52-week high": {}  # We'll add custom logic for this
+    }
+    
+    for screen_name, filters in screens.items():
+        screened = analyzer.create_stock_screener(filters)
+        print(f"\n{screen_name}: {len(screened)} stocks found")
+        for ticker, data in screened[:5]:  # Show top 5
+            price = data.get('current_price', 'N/A')
+            name = data.get('name', 'N/A')
+            print(f"  {ticker}: {name} - ${price}")
+    
+    print(f"\n✅ Analysis complete! Check exported files for full results.")
+    print(f"📊 Successfully analyzed: {len(analyzer.results)} stocks")
+    print(f"❌ Failed: {len(analyzer.errors)} stocks")
+
+if __name__ == "__main__":
+    main()

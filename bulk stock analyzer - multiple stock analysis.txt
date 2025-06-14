@@ -1,0 +1,286 @@
+#!/usr/bin/env python3
+"""
+Bulk Stock Analyzer - Analyze multiple stocks efficiently
+Using py-stocks package to gather data for multiple tickers
+"""
+
+import sys
+import os
+sys.path.append('py-stocks')
+
+from Stock import Stock
+import pandas as pd
+from datetime import datetime
+import time
+import json
+import csv
+
+class BulkStockAnalyzer:
+    def __init__(self, tickers=None):
+        """
+        Initialize with list of stock tickers
+        """
+        # Default popular stocks if none provided
+        self.tickers = tickers or [
+            'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'TSLA', 'META', 'NVDA', 
+            'LMT', 'BA', 'RTX', 'GD', 'NOC',  # Defense stocks
+            'JPM', 'BAC', 'WFC', 'C',  # Banks
+            'JNJ', 'PFE', 'UNH', 'ABBV',  # Healthcare
+            'XOM', 'CVX', 'COP',  # Energy
+            'KO', 'PEP', 'WMT', 'PG'  # Consumer goods
+        ]
+        self.results = {}
+        self.errors = {}
+    
+    def analyze_single_stock(self, ticker):
+        """Analyze a single stock and return comprehensive data"""
+        print(f"🔍 Analyzing {ticker}...")
+        
+        try:
+            stock = Stock(ticker)
+            data = {'ticker': ticker, 'timestamp': datetime.now().isoformat()}
+            
+            # Basic company info
+            try:
+                data['name'] = stock.get_name()
+            except: data['name'] = 'N/A'
+            
+            try:
+                data['sector'] = stock.get_sector()
+            except: data['sector'] = 'N/A'
+            
+            try:
+                data['industry'] = stock.get_industry()
+            except: data['industry'] = 'N/A'
+            
+            try:
+                data['employees'] = stock.get_employees()
+            except: data['employees'] = 'N/A'
+            
+            try:
+                data['website'] = stock.get_website()
+            except: data['website'] = 'N/A'
+            
+            # Current price data
+            try:
+                data['current_price'] = stock.get_current_price()
+            except: data['current_price'] = 'N/A'
+            
+            try:
+                data['volume'] = stock.get_volume()
+            except: data['volume'] = 'N/A'
+            
+            try:
+                data['avg_volume'] = stock.get_average_volume()
+            except: data['avg_volume'] = 'N/A'
+            
+            try:
+                data['dividend_yield'] = stock.get_dividend_yield()
+            except: data['dividend_yield'] = 'N/A'
+            
+            try:
+                data['day_high'] = stock.get_day_high()
+            except: data['day_high'] = 'N/A'
+            
+            try:
+                data['day_low'] = stock.get_day_low()
+            except: data['day_low'] = 'N/A'
+            
+            try:
+                data['week52_high'] = stock.get_52week_high()
+            except: data['week52_high'] = 'N/A'
+            
+            try:
+                data['week52_low'] = stock.get_52week_low()
+            except: data['week52_low'] = 'N/A'
+            
+            # Calculate some metrics
+            if data['current_price'] != 'N/A' and data['week52_high'] != 'N/A' and data['week52_low'] != 'N/A':
+                try:
+                    price = float(data['current_price'])
+                    high = float(data['week52_high'])
+                    low = float(data['week52_low'])
+                    data['price_vs_52w_high'] = ((price - high) / high) * 100
+                    data['price_vs_52w_low'] = ((price - low) / low) * 100
+                except:
+                    data['price_vs_52w_high'] = 'N/A'
+                    data['price_vs_52w_low'] = 'N/A'
+            
+            return data
+            
+        except Exception as e:
+            error_msg = f"Error analyzing {ticker}: {str(e)}"
+            print(f"❌ {error_msg}")
+            self.errors[ticker] = error_msg
+            return None
+    
+    def analyze_all_stocks(self, delay=1):
+        """
+        Analyze all stocks with optional delay between requests
+        delay: seconds to wait between each stock analysis (to avoid rate limits)
+        """
+        print(f"📊 Starting bulk analysis of {len(self.tickers)} stocks...")
+        print(f"⏱️ Using {delay} second delay between stocks to avoid rate limits")
+        print("=" * 60)
+        
+        start_time = time.time()
+        
+        for i, ticker in enumerate(self.tickers, 1):
+            print(f"[{i}/{len(self.tickers)}] ", end="")
+            
+            result = self.analyze_single_stock(ticker)
+            if result:
+                self.results[ticker] = result
+                print(f"✅ {ticker} completed")
+            else:
+                print(f"❌ {ticker} failed")
+            
+            # Add delay except for last stock
+            if i < len(self.tickers):
+                time.sleep(delay)
+        
+        end_time = time.time()
+        total_time = end_time - start_time
+        
+        print("=" * 60)
+        print(f"📈 Analysis Complete!")
+        print(f"✅ Successfully analyzed: {len(self.results)} stocks")
+        print(f"❌ Failed to analyze: {len(self.errors)} stocks")
+        print(f"⏱️ Total time: {total_time:.2f} seconds")
+        
+        return self.results
+    
+    def save_to_csv(self, filename="stock_analysis.csv"):
+        """Save results to CSV file"""
+        if not self.results:
+            print("No results to save!")
+            return
+        
+        # Convert results to DataFrame
+        df = pd.DataFrame.from_dict(self.results, orient='index')
+        df.to_csv(filename, index=False)
+        print(f"💾 Results saved to {filename}")
+        return filename
+    
+    def save_to_json(self, filename="stock_analysis.json"):
+        """Save results to JSON file"""
+        if not self.results:
+            print("No results to save!")
+            return
+        
+        with open(filename, 'w') as f:
+            json.dump(self.results, f, indent=2, default=str)
+        print(f"💾 Results saved to {filename}")
+        return filename
+    
+    def print_summary(self):
+        """Print a summary of all analyzed stocks"""
+        if not self.results:
+            print("No results to display!")
+            return
+        
+        print("\n📋 STOCK ANALYSIS SUMMARY")
+        print("=" * 100)
+        print(f"{'Ticker':<8} {'Name':<25} {'Price':<10} {'Sector':<20} {'52W High':<10} {'52W Low':<10}")
+        print("-" * 100)
+        
+        for ticker, data in self.results.items():
+            name = str(data.get('name', 'N/A'))[:24]
+            price = f"${data.get('current_price', 'N/A')}" if data.get('current_price') != 'N/A' else 'N/A'
+            sector = str(data.get('sector', 'N/A'))[:19]
+            high52 = f"${data.get('week52_high', 'N/A')}" if data.get('week52_high') != 'N/A' else 'N/A'
+            low52 = f"${data.get('week52_low', 'N/A')}" if data.get('week52_low') != 'N/A' else 'N/A'
+            
+            print(f"{ticker:<8} {name:<25} {price:<10} {sector:<20} {high52:<10} {low52:<10}")
+    
+    def get_top_performers(self, metric='price_vs_52w_low', top_n=10):
+        """Get top performing stocks based on a metric"""
+        if not self.results:
+            print("No results available!")
+            return []
+        
+        # Filter out stocks with N/A values for the metric
+        valid_stocks = {k: v for k, v in self.results.items() 
+                       if v.get(metric) != 'N/A' and v.get(metric) is not None}
+        
+        if not valid_stocks:
+            print(f"No valid data for metric: {metric}")
+            return []
+        
+        # Sort by metric
+        sorted_stocks = sorted(valid_stocks.items(), 
+                             key=lambda x: float(x[1][metric]), 
+                             reverse=True)
+        
+        return sorted_stocks[:top_n]
+    
+    def analyze_by_sector(self):
+        """Group and analyze stocks by sector"""
+        if not self.results:
+            print("No results available!")
+            return {}
+        
+        sectors = {}
+        for ticker, data in self.results.items():
+            sector = data.get('sector', 'Unknown')
+            if sector not in sectors:
+                sectors[sector] = []
+            sectors[sector].append((ticker, data))
+        
+        print("\n🏭 ANALYSIS BY SECTOR")
+        print("=" * 60)
+        for sector, stocks in sectors.items():
+            print(f"\n{sector.upper()} ({len(stocks)} stocks):")
+            for ticker, data in stocks:
+                price = data.get('current_price', 'N/A')
+                name = data.get('name', 'N/A')
+                print(f"  {ticker}: {name} - ${price}")
+        
+        return sectors
+
+def main():
+    """Main function with different analysis options"""
+    
+    print("🚀 BULK STOCK ANALYZER")
+    print("=" * 60)
+    
+    # Option 1: Analyze popular stocks
+    print("Option 1: Analyzing popular stocks...")
+    analyzer = BulkStockAnalyzer()
+    
+    # Option 2: Custom stock list
+    # custom_tickers = ['AAPL', 'MSFT', 'GOOGL', 'TSLA', 'LMT']
+    # analyzer = BulkStockAnalyzer(custom_tickers)
+    
+    # Option 3: Defense/Aerospace focused
+    # defense_tickers = ['LMT', 'BA', 'RTX', 'GD', 'NOC', 'TXT', 'HII', 'LDOS']
+    # analyzer = BulkStockAnalyzer(defense_tickers)
+    
+    # Run analysis
+    results = analyzer.analyze_all_stocks(delay=0.5)  # 0.5 second delay between stocks
+    
+    # Display results
+    analyzer.print_summary()
+    
+    # Save results
+    analyzer.save_to_csv("stock_analysis_results.csv")
+    analyzer.save_to_json("stock_analysis_results.json")
+    
+    # Show top performers
+    print("\n🏆 TOP PERFORMERS (vs 52-week low):")
+    top_performers = analyzer.get_top_performers('price_vs_52w_low', 5)
+    for i, (ticker, data) in enumerate(top_performers, 1):
+        performance = data['price_vs_52w_low']
+        print(f"{i}. {ticker}: +{performance:.1f}% from 52-week low")
+    
+    # Sector analysis
+    analyzer.analyze_by_sector()
+    
+    # Show any errors
+    if analyzer.errors:
+        print(f"\n❌ ERRORS ENCOUNTERED:")
+        for ticker, error in analyzer.errors.items():
+            print(f"  {ticker}: {error}")
+
+if __name__ == "__main__":
+    main()
