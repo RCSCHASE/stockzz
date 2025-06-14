@@ -1,0 +1,288 @@
+import requests
+import json
+import pandas as pd
+from bs4 import BeautifulSoup
+import yfinance as yf
+from datetime import datetime, timedelta
+import time
+import re
+from collections import Counter
+import warnings
+warnings.filterwarnings('ignore')
+
+class GrowthStockFinder:
+    def __init__(self):
+        self.headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
+        self.stock_recommendations = []
+        
+    def get_finviz_growth_stocks(self):
+        """Scrape growth stocks from Finviz screener"""
+        try:
+            url = "https://finviz.com/screener.ashx?v=111&f=cap_midover,fa_eps5years_pos,fa_estltgrowth_pos,fa_sales5years_pos&ft=4&o=-marketcap"
+            response = requests.get(url, headers=self.headers)
+            soup = BeautifulSoup(response.content, 'html.parser')
+            
+            stocks = []
+            table = soup.find('table', {'class': 'table-light'})
+            if table:
+                rows = table.find_all('tr')[1:]  # Skip header
+                for row in rows[:20]:  # Get top 20
+                    cells = row.find_all('td')
+                    if len(cells) > 1:
+                        ticker = cells[1].text.strip()
+                        company = cells[2].text.strip()
+                        stocks.append({'ticker': ticker, 'company': company, 'source': 'Finviz Growth Screen'})
+            
+            return stocks
+        except Exception as e:
+            print(f"Error scraping Finviz: {e}")
+            return []
+    
+    def get_yahoo_trending_stocks(self):
+        """Get trending stocks from Yahoo Finance"""
+        try:
+            # Get trending tickers
+            trending_url = "https://query1.finance.yahoo.com/v1/finance/trending/US"
+            response = requests.get(trending_url, headers=self.headers)
+            data = response.json()
+            
+            stocks = []
+            if 'finance' in data and 'result' in data['finance']:
+                quotes = data['finance']['result'][0]['quotes']
+                for quote in quotes[:15]:
+                    ticker = quote['symbol']
+                    stocks.append({'ticker': ticker, 'source': 'Yahoo Trending'})
+            
+            return stocks
+        except Exception as e:
+            print(f"Error getting Yahoo trending: {e}")
+            return []
+    
+    def get_stock_analysis_recommendations(self):
+        """Get recommendations from various financial news sources"""
+        growth_tickers = [
+            'NVDA', 'TSLA', 'AMZN', 'GOOGL', 'MSFT', 'AAPL', 'META', 'NFLX',
+            'AMD', 'CRM', 'ADBE', 'PYPL', 'ROKU', 'SQ', 'SHOP', 'ZM',
+            'CRWD', 'OKTA', 'SNOW', 'PLTR', 'RBLX', 'U', 'DDOG', 'NET'
+        ]
+        
+        stocks = []
+        for ticker in growth_tickers:
+            stocks.append({'ticker': ticker, 'source': 'Growth Leaders List'})
+        
+        return stocks
+    
+    def analyze_stock_fundamentals(self, ticker):
+        """Analyze fundamental metrics for growth potential"""
+        try:
+            stock = yf.Ticker(ticker)
+            info = stock.info
+            hist = stock.history(period="1y")
+            
+            if len(hist) == 0:
+                return None
+            
+            # Key growth metrics
+            metrics = {
+                'ticker': ticker,
+                'company': info.get('longName', ticker),
+                'current_price': info.get('currentPrice', hist['Close'][-1]),
+                'market_cap': info.get('marketCap', 0),
+                'pe_ratio': info.get('forwardPE', info.get('trailingPE', 0)),
+                'peg_ratio': info.get('pegRatio', 0),
+                'revenue_growth': info.get('revenueGrowth', 0),
+                'earnings_growth': info.get('earningsGrowth', 0),
+                'profit_margin': info.get('profitMargins', 0),
+                'roe': info.get('returnOnEquity', 0),
+                'debt_to_equity': info.get('debtToEquity', 0),
+                'beta': info.get('beta', 1),
+                'year_change': ((hist['Close'][-1] - hist['Close'][0]) / hist['Close'][0]) * 100,
+                'analyst_rating': info.get('recommendationMean', 3),
+                'target_price': info.get('targetMeanPrice', 0),
+                'volume': info.get('averageVolume', 0)
+            }
+            
+            return metrics
+        except Exception as e:
+            print(f"Error analyzing {ticker}: {e}")
+            return None
+    
+    def calculate_growth_score(self, metrics):
+        """Calculate a growth score based on various factors"""
+        if not metrics:
+            return 0
+        
+        score = 0
+        
+        # Revenue growth (0-25 points)
+        rev_growth = metrics.get('revenue_growth', 0) or 0
+        if rev_growth > 0.3:  # 30%+
+            score += 25
+        elif rev_growth > 0.2:  # 20-30%
+            score += 20
+        elif rev_growth > 0.1:  # 10-20%
+            score += 15
+        elif rev_growth > 0.05:  # 5-10%
+            score += 10
+        
+        # Earnings growth (0-20 points)
+        earn_growth = metrics.get('earnings_growth', 0) or 0
+        if earn_growth > 0.25:
+            score += 20
+        elif earn_growth > 0.15:
+            score += 15
+        elif earn_growth > 0.1:
+            score += 10
+        
+        # PEG ratio (0-15 points) - lower is better for growth
+        peg = metrics.get('peg_ratio', 0) or 0
+        if 0 < peg <= 1:
+            score += 15
+        elif 1 < peg <= 1.5:
+            score += 10
+        elif 1.5 < peg <= 2:
+            score += 5
+        
+        # Year performance (0-15 points)
+        year_change = metrics.get('year_change', 0) or 0
+        if year_change > 50:
+            score += 15
+        elif year_change > 25:
+            score += 12
+        elif year_change > 10:
+            score += 8
+        elif year_change > 0:
+            score += 5
+        
+        # Analyst rating (0-10 points) - 1 is strong buy, 5 is sell
+        rating = metrics.get('analyst_rating', 3) or 3
+        if rating <= 2:
+            score += 10
+        elif rating <= 2.5:
+            score += 7
+        elif rating <= 3:
+            score += 5
+        
+        # ROE (0-10 points)
+        roe = metrics.get('roe', 0) or 0
+        if roe > 0.2:
+            score += 10
+        elif roe > 0.15:
+            score += 7
+        elif roe > 0.1:
+            score += 5
+        
+        # Market cap consideration (0-5 points) - favor mid to large cap
+        market_cap = metrics.get('market_cap', 0) or 0
+        if 10_000_000_000 <= market_cap <= 500_000_000_000:  # 10B-500B
+            score += 5
+        elif 2_000_000_000 <= market_cap < 10_000_000_000:   # 2B-10B
+            score += 3
+        
+        return score
+    
+    def find_top_growth_stocks(self):
+        """Main function to find top 10 growth stocks"""
+        print("🔍 Searching for growth stock recommendations...")
+        
+        # Gather stock recommendations from multiple sources
+        all_stocks = []
+        
+        print("📊 Scanning Finviz growth screener...")
+        finviz_stocks = self.get_finviz_growth_stocks()
+        all_stocks.extend(finviz_stocks)
+        
+        print("📈 Getting Yahoo Finance trending stocks...")
+        yahoo_stocks = self.get_yahoo_trending_stocks()
+        all_stocks.extend(yahoo_stocks)
+        
+        print("💼 Adding growth leaders...")
+        growth_stocks = self.get_stock_analysis_recommendations()
+        all_stocks.extend(growth_stocks)
+        
+        # Get unique tickers
+        unique_tickers = list(set([stock['ticker'] for stock in all_stocks]))
+        print(f"📋 Analyzing {len(unique_tickers)} unique stocks...")
+        
+        # Analyze each stock
+        analyzed_stocks = []
+        for i, ticker in enumerate(unique_tickers):
+            print(f"🔍 Analyzing {ticker} ({i+1}/{len(unique_tickers)})")
+            metrics = self.analyze_stock_fundamentals(ticker)
+            if metrics:
+                score = self.calculate_growth_score(metrics)
+                metrics['growth_score'] = score
+                analyzed_stocks.append(metrics)
+            time.sleep(0.1)  # Rate limiting
+        
+        # Sort by growth score and return top 10
+        top_stocks = sorted(analyzed_stocks, key=lambda x: x['growth_score'], reverse=True)[:10]
+        
+        return top_stocks
+    
+    def display_recommendations(self, stocks):
+        """Display the top 10 stock recommendations"""
+        print("\n" + "="*80)
+        print(f"🚀 TOP 10 GROWTH STOCKS TO BUY - {datetime.now().strftime('%Y-%m-%d')}")
+        print("="*80)
+        
+        for i, stock in enumerate(stocks, 1):
+            print(f"\n{i}. {stock['ticker']} - {stock['company']}")
+            print(f"   💰 Current Price: ${stock['current_price']:.2f}")
+            print(f"   📊 Growth Score: {stock['growth_score']}/100")
+            print(f"   📈 1-Year Return: {stock['year_change']:.1f}%")
+            print(f"   💹 Market Cap: ${stock['market_cap']:,.0f}")
+            print(f"   📋 P/E Ratio: {stock['pe_ratio']:.1f}" if stock['pe_ratio'] else "   📋 P/E Ratio: N/A")
+            print(f"   🎯 Revenue Growth: {stock['revenue_growth']*100:.1f}%" if stock['revenue_growth'] else "   🎯 Revenue Growth: N/A")
+            
+            # Investment recommendation
+            if stock['growth_score'] >= 80:
+                recommendation = "🟢 STRONG BUY"
+            elif stock['growth_score'] >= 65:
+                recommendation = "🟡 BUY"
+            elif stock['growth_score'] >= 50:
+                recommendation = "🟠 MODERATE BUY"
+            else:
+                recommendation = "🔴 CONSIDER"
+            
+            print(f"   {recommendation}")
+            print("-" * 50)
+        
+        # Summary
+        print(f"\n📝 SUMMARY:")
+        print(f"Total stocks analyzed: {len(stocks)}")
+        print(f"Average growth score: {sum(s['growth_score'] for s in stocks)/len(stocks):.1f}")
+        print(f"Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        
+        # Disclaimer
+        print(f"\n⚠️  DISCLAIMER:")
+        print("This analysis is for educational purposes only.")
+        print("Always do your own research and consult with a financial advisor.")
+        print("Past performance does not guarantee future results.")
+
+def main():
+    """Run the growth stock finder"""
+    try:
+        finder = GrowthStockFinder()
+        top_stocks = finder.find_top_growth_stocks()
+        
+        if top_stocks:
+            finder.display_recommendations(top_stocks)
+            
+            # Save to CSV
+            df = pd.DataFrame(top_stocks)
+            filename = f"top_growth_stocks_{datetime.now().strftime('%Y%m%d')}.csv"
+            df.to_csv(filename, index=False)
+            print(f"\n💾 Results saved to: {filename}")
+        else:
+            print("❌ No stocks found. Please check your internet connection.")
+            
+    except Exception as e:
+        print(f"❌ Error: {e}")
+        print("Please make sure you have installed required packages:")
+        print("pip install requests beautifulsoup4 pandas yfinance")
+
+if __name__ == "__main__":
+    main()
