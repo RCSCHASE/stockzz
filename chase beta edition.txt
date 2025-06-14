@@ -1,0 +1,756 @@
+#!/usr/bin/env python3
+"""
+Complete AI Stocks Analyzer with Web Research + Enhanced News Coverage
+Analyzes AI stocks with current data, news, trends, and recommendations
+Includes buy/hold/sell recommendations and 10-year projections
+NEW: Real-time news from top financial sites with URLs and links
+"""
+
+import sys
+import os
+sys.path.append('py-stocks')
+
+from Stock import Stock
+import pandas as pd
+import numpy as np
+from datetime import datetime, timedelta
+import time
+import json
+import requests
+from bs4 import BeautifulSoup
+import re
+from dataclasses import dataclass
+from typing import Dict, List, Tuple, Optional
+import warnings
+warnings.filterwarnings('ignore')
+
+@dataclass
+class NewsArticle:
+    headline: str
+    url: str
+    source: str
+    date: str
+    summary: str = ""
+    sentiment_score: float = 0.0
+
+@dataclass
+class StockRecommendation:
+    action: str  # BUY, HOLD, SELL
+    confidence: float  # 0-100%
+    reasoning: List[str]
+    risk_level: str  # LOW, MEDIUM, HIGH
+    target_price: Optional[float] = None
+    timeframe: str = "6-12 months"
+
+@dataclass
+class StockAnalysis:
+    ticker: str
+    current_price: float
+    financial_health: Dict
+    technical_indicators: Dict
+    news_sentiment: Dict
+    market_trends: Dict
+    recommendation: StockRecommendation
+    projections: Dict
+    risk_factors: List[str]
+    catalysts: List[str]
+
+class AIStockAnalyzer:
+    def __init__(self):
+        self.ai_stocks = [
+            'NVDA',   # NVIDIA Corporation
+            'AMD',    # Advanced Micro Devices
+            'GOOGL',  # Alphabet (Google)
+            'MSFT',   # Microsoft
+            'TSLA',   # Tesla (AI/Autonomous)
+            'META',   # Meta Platforms
+            'AAPL',   # Apple
+            'ORCL',   # Oracle
+            'CRM',    # Salesforce
+            'NOW',    # ServiceNow
+            'PLTR',   # Palantir
+            'SNOW',   # Snowflake
+            'MDB',    # MongoDB
+            'DDOG',   # Datadog
+            'NET',    # Cloudflare
+            'CRWD',   # CrowdStrike
+            'ZS',     # Zscaler
+            'OKTA',   # Okta
+            'SPLK',   # Splunk
+            'PANW',   # Palo Alto Networks
+            'U',      # Unity Software
+            'PATH',   # UiPath
+            'AI',     # C3.ai
+            'BBAI',   # BigBear.ai
+            'SQ',     # Block (Square)
+        ]
+        self.results = {}
+        self.web_session = requests.Session()
+        self.web_session.headers.update({
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        })
+        
+        # Top financial news sources
+        self.news_sources = {
+            'yahoo_finance': 'https://finance.yahoo.com/quote/{}/news',
+            'marketwatch': 'https://www.marketwatch.com/investing/stock/{}',
+            'seeking_alpha': 'https://seekingalpha.com/symbol/{}',
+            'cnbc': 'https://www.cnbc.com/quotes/{}',
+            'bloomberg': 'https://www.bloomberg.com/quote/{}:US',
+            'reuters': 'https://www.reuters.com/companies/{}',
+            'fool': 'https://www.fool.com/quote/nasdaq/{}/',
+            'benzinga': 'https://www.benzinga.com/quote/{}'
+        }
+    
+    def get_stock_fundamentals(self, ticker: str) -> Dict:
+        """Get fundamental data using py-stocks"""
+        try:
+            stock = Stock(ticker)
+            fundamentals = {
+                'name': self.safe_get(stock.get_name),
+                'sector': self.safe_get(stock.get_sector),
+                'industry': self.safe_get(stock.get_industry),
+                'current_price': self.safe_get(stock.get_current_price),
+                'volume': self.safe_get(stock.get_volume),
+                'avg_volume': self.safe_get(stock.get_average_volume),
+                'dividend_yield': self.safe_get(stock.get_dividend_yield),
+                'day_high': self.safe_get(stock.get_day_high),
+                'day_low': self.safe_get(stock.get_day_low),
+                'week52_high': self.safe_get(stock.get_52week_high),
+                'week52_low': self.safe_get(stock.get_52week_low),
+                'employees': self.safe_get(stock.get_employees),
+                'website': self.safe_get(stock.get_website)
+            }
+            
+            # Get historical data for trend analysis
+            try:
+                historical_data = stock.get_last_month_data()
+                fundamentals['historical_data'] = historical_data
+                fundamentals['month_trend'] = self.calculate_trend(historical_data)
+            except:
+                fundamentals['historical_data'] = None
+                fundamentals['month_trend'] = 'Unknown'
+            
+            return fundamentals
+            
+        except Exception as e:
+            print(f"❌ Error getting fundamentals for {ticker}: {e}")
+            return {}
+    
+    def safe_get(self, func):
+        """Safely execute function and return result or 'N/A'"""
+        try:
+            result = func()
+            return result if result is not None else 'N/A'
+        except:
+            return 'N/A'
+    
+    def calculate_trend(self, historical_data) -> str:
+        """Calculate price trend from historical data"""
+        if historical_data is None or len(historical_data) < 5:
+            return 'Unknown'
+        
+        try:
+            closes = historical_data['Close'].values
+            if len(closes) < 5:
+                return 'Unknown'
+                
+            recent_avg = np.mean(closes[-5:])
+            older_avg = np.mean(closes[:5])
+            
+            pct_change = ((recent_avg - older_avg) / older_avg) * 100
+            
+            if pct_change > 5:
+                return 'Strong Uptrend'
+            elif pct_change > 2:
+                return 'Uptrend'
+            elif pct_change < -5:
+                return 'Strong Downtrend'
+            elif pct_change < -2:
+                return 'Downtrend'
+            else:
+                return 'Sideways'
+        except:
+            return 'Unknown'
+    
+    def scrape_yahoo_finance_news(self, ticker: str) -> List[NewsArticle]:
+        """Scrape news from Yahoo Finance"""
+        articles = []
+        try:
+            url = f"https://finance.yahoo.com/quote/{ticker}/news"
+            response = self.web_session.get(url, timeout=15)
+            soup = BeautifulSoup(response.content, 'html.parser')
+            
+            # Find news articles
+            news_items = soup.find_all('h3', class_='Mb(5px)')
+            if not news_items:
+                # Try alternative selectors
+                news_items = soup.find_all('a', href=re.compile(r'/news/'))
+            
+            for item in news_items[:5]:  # Get top 5 articles
+                try:
+                    link_tag = item.find('a') if item.name != 'a' else item
+                    if link_tag:
+                        headline = link_tag.get_text(strip=True)
+                        href = link_tag.get('href', '')
+                        
+                        # Make URL absolute
+                        if href.startswith('/'):
+                            full_url = f"https://finance.yahoo.com{href}"
+                        elif href.startswith('http'):
+                            full_url = href
+                        else:
+                            continue
+                        
+                        # Try to get date
+                        date_elem = item.find_next('div', class_='C(#959595)')
+                        date_str = date_elem.get_text(strip=True) if date_elem else datetime.now().strftime('%Y-%m-%d')
+                        
+                        articles.append(NewsArticle(
+                            headline=headline,
+                            url=full_url,
+                            source='Yahoo Finance',
+                            date=date_str,
+                            sentiment_score=self.analyze_sentiment(headline)
+                        ))
+                except Exception as e:
+                    continue
+            
+        except Exception as e:
+            print(f"⚠️ Could not scrape Yahoo Finance news for {ticker}: {e}")
+        
+        return articles
+    
+    def scrape_marketwatch_news(self, ticker: str) -> List[NewsArticle]:
+        """Scrape news from MarketWatch"""
+        articles = []
+        try:
+            url = f"https://www.marketwatch.com/investing/stock/{ticker.lower()}"
+            response = self.web_session.get(url, timeout=15)
+            soup = BeautifulSoup(response.content, 'html.parser')
+            
+            # Find news headlines
+            news_items = soup.find_all('a', class_='link')
+            
+            for item in news_items[:5]:
+                try:
+                    headline = item.get_text(strip=True)
+                    if len(headline) > 20:  # Filter out short links
+                        href = item.get('href', '')
+                        
+                        # Make URL absolute
+                        if href.startswith('/'):
+                            full_url = f"https://www.marketwatch.com{href}"
+                        elif href.startswith('http'):
+                            full_url = href
+                        else:
+                            continue
+                        
+                        articles.append(NewsArticle(
+                            headline=headline,
+                            url=full_url,
+                            source='MarketWatch',
+                            date=datetime.now().strftime('%Y-%m-%d'),
+                            sentiment_score=self.analyze_sentiment(headline)
+                        ))
+                except Exception:
+                    continue
+                    
+        except Exception as e:
+            print(f"⚠️ Could not scrape MarketWatch news for {ticker}: {e}")
+        
+        return articles
+    
+    def scrape_seeking_alpha_news(self, ticker: str) -> List[NewsArticle]:
+        """Scrape news from Seeking Alpha"""
+        articles = []
+        try:
+            url = f"https://seekingalpha.com/symbol/{ticker}/news"
+            response = self.web_session.get(url, timeout=15)
+            soup = BeautifulSoup(response.content, 'html.parser')
+            
+            # Find article links
+            article_links = soup.find_all('a', {'data-test-id': 'post-list-item-title'})
+            
+            for link in article_links[:5]:
+                try:
+                    headline = link.get_text(strip=True)
+                    href = link.get('href', '')
+                    
+                    if href.startswith('/'):
+                        full_url = f"https://seekingalpha.com{href}"
+                    else:
+                        full_url = href
+                    
+                    articles.append(NewsArticle(
+                        headline=headline,
+                        url=full_url,
+                        source='Seeking Alpha',
+                        date=datetime.now().strftime('%Y-%m-%d'),
+                        sentiment_score=self.analyze_sentiment(headline)
+                    ))
+                except Exception:
+                    continue
+                    
+        except Exception as e:
+            print(f"⚠️ Could not scrape Seeking Alpha news for {ticker}: {e}")
+        
+        return articles
+    
+    def scrape_benzinga_news(self, ticker: str) -> List[NewsArticle]:
+        """Scrape news from Benzinga"""
+        articles = []
+        try:
+            # Try Benzinga's news API endpoint
+            url = f"https://www.benzinga.com/stock/{ticker.lower()}/news"
+            response = self.web_session.get(url, timeout=15)
+            soup = BeautifulSoup(response.content, 'html.parser')
+            
+            # Find news articles
+            news_items = soup.find_all('div', class_='story-block')
+            
+            for item in news_items[:5]:
+                try:
+                    headline_tag = item.find('h3') or item.find('h2') or item.find('a')
+                    if headline_tag:
+                        headline = headline_tag.get_text(strip=True)
+                        link_tag = headline_tag.find('a') if headline_tag.name != 'a' else headline_tag
+                        
+                        if link_tag:
+                            href = link_tag.get('href', '')
+                            if href.startswith('/'):
+                                full_url = f"https://www.benzinga.com{href}"
+                            else:
+                                full_url = href
+                            
+                            articles.append(NewsArticle(
+                                headline=headline,
+                                url=full_url,
+                                source='Benzinga',
+                                date=datetime.now().strftime('%Y-%m-%d'),
+                                sentiment_score=self.analyze_sentiment(headline)
+                            ))
+                except Exception:
+                    continue
+                    
+        except Exception as e:
+            print(f"⚠️ Could not scrape Benzinga news for {ticker}: {e}")
+        
+        return articles
+    
+    def get_comprehensive_news(self, ticker: str, company_name: str) -> Dict:
+        """Get comprehensive news from multiple top financial sites"""
+        print(f"📰 Gathering news for {ticker} from top financial sites...")
+        
+        all_articles = []
+        
+        # Get news from py-stocks first
+        try:
+            stock = Stock(ticker)
+            py_stocks_news = stock.get_news()
+            
+            if py_stocks_news is not None and len(py_stocks_news) > 0:
+                for idx, row in py_stocks_news.head(3).iterrows():
+                    headline = row.get('title', 'No title')
+                    date = row.get('date', datetime.now().strftime('%Y-%m-%d'))
+                    url = row.get('link', '#')
+                    
+                    all_articles.append(NewsArticle(
+                        headline=headline,
+                        url=url,
+                        source='py-stocks',
+                        date=str(date),
+                        sentiment_score=self.analyze_sentiment(headline)
+                    ))
+        except Exception as e:
+            print(f"⚠️ py-stocks news error for {ticker}: {e}")
+        
+        # Scrape from major financial news sites
+        news_scrapers = [
+            self.scrape_yahoo_finance_news,
+            self.scrape_marketwatch_news,
+            self.scrape_seeking_alpha_news,
+            self.scrape_benzinga_news
+        ]
+        
+        for scraper in news_scrapers:
+            try:
+                articles = scraper(ticker)
+                all_articles.extend(articles)
+                time.sleep(1)  # Be respectful to servers
+            except Exception as e:
+                print(f"⚠️ News scraping error: {e}")
+                continue
+        
+        # Remove duplicates based on headline similarity
+        unique_articles = self.remove_duplicate_articles(all_articles)
+        
+        # Sort by sentiment score and date
+        unique_articles.sort(key=lambda x: (x.sentiment_score, x.date), reverse=True)
+        
+        # Calculate overall sentiment
+        if unique_articles:
+            avg_sentiment = sum(article.sentiment_score for article in unique_articles) / len(unique_articles)
+            sentiment_scores = [article.sentiment_score for article in unique_articles]
+        else:
+            avg_sentiment = 0
+            sentiment_scores = []
+        
+        # Extract key topics from all headlines
+        all_headlines = ' '.join([article.headline for article in unique_articles])
+        key_topics = self.extract_key_topics(all_headlines)
+        
+        news_analysis = {
+            'articles_count': len(unique_articles),
+            'sentiment_score': avg_sentiment,
+            'sentiment_distribution': {
+                'positive': len([s for s in sentiment_scores if s > 10]),
+                'neutral': len([s for s in sentiment_scores if -10 <= s <= 10]),
+                'negative': len([s for s in sentiment_scores if s < -10])
+            },
+            'key_topics': key_topics,
+            'articles': unique_articles[:10],  # Top 10 articles
+            'news_sources': list(set([article.source for article in unique_articles])),
+            'latest_update': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        }
+        
+        return news_analysis
+    
+    def remove_duplicate_articles(self, articles: List[NewsArticle]) -> List[NewsArticle]:
+        """Remove duplicate articles based on headline similarity"""
+        unique_articles = []
+        seen_headlines = set()
+        
+        for article in articles:
+            # Create a simplified version of headline for comparison
+            simplified_headline = re.sub(r'[^\w\s]', '', article.headline.lower())
+            simplified_headline = ' '.join(simplified_headline.split()[:5])  # First 5 words
+            
+            if simplified_headline not in seen_headlines and len(article.headline) > 10:
+                seen_headlines.add(simplified_headline)
+                unique_articles.append(article)
+        
+        return unique_articles
+    
+    def get_recent_news(self, ticker: str, company_name: str) -> Dict:
+        """Enhanced news function - now calls comprehensive news gathering"""
+        return self.get_comprehensive_news(ticker, company_name)
+    
+    def analyze_sentiment(self, text: str) -> float:
+        """Enhanced sentiment analysis based on keyword scoring"""
+        positive_words = [
+            'growth', 'profit', 'revenue', 'beat', 'exceed', 'strong', 'robust', 
+            'gain', 'rise', 'surge', 'breakthrough', 'innovation', 'partnership',
+            'acquisition', 'expansion', 'bullish', 'optimistic', 'upgrade',
+            'outperform', 'buy', 'recommend', 'AI', 'artificial intelligence',
+            'machine learning', 'cloud', 'digital transformation', 'boom',
+            'soar', 'rally', 'momentum', 'accelerating', 'record', 'milestone'
+        ]
+        
+        negative_words = [
+            'loss', 'decline', 'fall', 'drop', 'weak', 'poor', 'miss', 'below',
+            'concern', 'risk', 'challenge', 'competition', 'bearish', 'sell',
+            'downgrade', 'regulation', 'lawsuit', 'investigation', 'layoffs',
+            'restructuring', 'volatility', 'uncertainty', 'crash', 'plunge',
+            'warning', 'caution', 'disappointed', 'struggle', 'pressure'
+        ]
+        
+        text_lower = text.lower()
+        positive_count = sum(1 for word in positive_words if word in text_lower)
+        negative_count = sum(1 for word in negative_words if word in text_lower)
+        
+        total_words = len(text.split())
+        if total_words == 0:
+            return 0
+        
+        # Enhanced sentiment calculation
+        net_sentiment = positive_count - negative_count
+        word_density = max(total_words / 10, 1)
+        sentiment = (net_sentiment / word_density) * 20
+        
+        return max(-100, min(100, sentiment))
+    
+    def extract_key_topics(self, text: str) -> List[str]:
+        """Extract key topics from news text"""
+        ai_topics = [
+            'artificial intelligence', 'machine learning', 'deep learning',
+            'neural network', 'automation', 'robotics', 'cloud computing',
+            'data analytics', 'big data', 'digital transformation',
+            'semiconductor', 'chip', 'GPU', 'processor', 'quantum computing',
+            'earnings', 'revenue', 'partnership', 'acquisition', 'IPO'
+        ]
+        
+        found_topics = []
+        text_lower = text.lower()
+        
+        for topic in ai_topics:
+            if topic in text_lower:
+                found_topics.append(topic.title())
+        
+        return found_topics[:5]  # Return top 5 topics
+    
+    def scrape_yahoo_finance_data(self, ticker: str) -> Dict:
+        """Scrape additional data from Yahoo Finance"""
+        try:
+            url = f"https://finance.yahoo.com/quote/{ticker}"
+            response = self.web_session.get(url, timeout=10)
+            soup = BeautifulSoup(response.content, 'html.parser')
+            
+            data = {}
+            
+            # Try to get market cap, P/E ratio, etc.
+            try:
+                # Market cap
+                market_cap_elem = soup.find('td', {'data-test': 'MARKET_CAP-value'})
+                if market_cap_elem:
+                    data['market_cap'] = market_cap_elem.text.strip()
+                
+                # P/E ratio
+                pe_elem = soup.find('td', {'data-test': 'PE_RATIO-value'})
+                if pe_elem:
+                    data['pe_ratio'] = pe_elem.text.strip()
+                
+                # EPS
+                eps_elem = soup.find('td', {'data-test': 'EPS_RATIO-value'})
+                if eps_elem:
+                    data['eps'] = eps_elem.text.strip()
+                    
+            except Exception as e:
+                print(f"Note: Could not scrape all Yahoo Finance data for {ticker}")
+            
+            return data
+            
+        except Exception as e:
+            print(f"❌ Error scraping Yahoo Finance for {ticker}: {e}")
+            return {}
+    
+    def calculate_financial_health_score(self, fundamentals: Dict) -> Tuple[int, List[str]]:
+        """Calculate financial health score (0-100) and provide reasoning"""
+        score = 50  # Start with neutral score
+        reasoning = []
+        
+        try:
+            current_price = fundamentals.get('current_price')
+            week52_high = fundamentals.get('week52_high')
+            week52_low = fundamentals.get('week52_low')
+            volume = fundamentals.get('volume')
+            avg_volume = fundamentals.get('avg_volume')
+            
+            # Price position in 52-week range
+            if all(x != 'N/A' and x is not None for x in [current_price, week52_high, week52_low]):
+                try:
+                    price_position = (float(current_price) - float(week52_low)) / (float(week52_high) - float(week52_low))
+                    
+                    if price_position > 0.8:
+                        score += 15
+                        reasoning.append("Trading near 52-week high (bullish)")
+                    elif price_position > 0.6:
+                        score += 10
+                        reasoning.append("Trading in upper range (positive)")
+                    elif price_position < 0.2:
+                        score -= 15
+                        reasoning.append("Trading near 52-week low (bearish)")
+                    elif price_position < 0.4:
+                        score -= 10
+                        reasoning.append("Trading in lower range (concerning)")
+                except:
+                    pass
+            
+            # Volume analysis
+            if all(x != 'N/A' and x is not None for x in [volume, avg_volume]):
+                try:
+                    volume_ratio = float(volume) / float(avg_volume)
+                    if volume_ratio > 1.5:
+                        score += 10
+                        reasoning.append("High trading volume (increased interest)")
+                    elif volume_ratio < 0.5:
+                        score -= 5
+                        reasoning.append("Low trading volume (decreased interest)")
+                except:
+                    pass
+            
+            # Trend analysis
+            trend = fundamentals.get('month_trend', 'Unknown')
+            if trend == 'Strong Uptrend':
+                score += 20
+                reasoning.append("Strong upward price trend")
+            elif trend == 'Uptrend':
+                score += 10
+                reasoning.append("Positive price trend")
+            elif trend == 'Strong Downtrend':
+                score -= 20
+                reasoning.append("Strong downward price trend")
+            elif trend == 'Downtrend':
+                score -= 10
+                reasoning.append("Negative price trend")
+            
+            return max(0, min(100, score)), reasoning
+            
+        except Exception as e:
+            return 50, ["Unable to calculate complete financial health score"]
+    
+    def get_ai_market_research(self, ticker: str) -> Dict:
+        """Research AI market trends and company positioning"""
+        try:
+            # Market research data
+            ai_market_data = {
+                'market_size_growth': '25-35% annually',
+                'key_trends': [
+                    'Generative AI adoption',
+                    'Edge AI computing',
+                    'AI chip demand surge',
+                    'Enterprise AI integration',
+                    'Autonomous systems growth'
+                ],
+                'competition_level': 'High',
+                'regulatory_environment': 'Evolving',
+                'investment_flow': 'Increasing'
+            }
+            
+            # Company-specific AI positioning
+            ai_positioning = self.get_company_ai_positioning(ticker)
+            ai_market_data.update(ai_positioning)
+            
+            return ai_market_data
+            
+        except Exception as e:
+            print(f"❌ Error getting AI market research for {ticker}: {e}")
+            return {}
+    
+    def get_company_ai_positioning(self, ticker: str) -> Dict:
+        """Get company's AI market positioning"""
+        # AI company categorization and positioning
+        ai_leaders = {
+            'NVDA': {
+                'category': 'AI Infrastructure Leader',
+                'strengths': ['GPU dominance', 'CUDA ecosystem', 'Data center growth'],
+                'ai_revenue_percentage': '80%',
+                'moat': 'Very Strong'
+            },
+            'GOOGL': {
+                'category': 'AI Platform Giant',
+                'strengths': ['Search AI', 'Cloud AI services', 'Research leadership'],
+                'ai_revenue_percentage': '40%',
+                'moat': 'Very Strong'
+            },
+            'MSFT': {
+                'category': 'Enterprise AI Leader',
+                'strengths': ['Azure AI', 'Office AI', 'OpenAI partnership'],
+                'ai_revenue_percentage': '35%',
+                'moat': 'Very Strong'
+            },
+            'AMD': {
+                'category': 'AI Chip Challenger',
+                'strengths': ['CPU/GPU combo', 'Data center growth', 'Cost advantage'],
+                'ai_revenue_percentage': '30%',
+                'moat': 'Moderate'
+            },
+            'TSLA': {
+                'category': 'Autonomous AI Pioneer',
+                'strengths': ['FSD technology', 'Real-world AI data', 'Vertical integration'],
+                'ai_revenue_percentage': '20%',
+                'moat': 'Strong'
+            }
+        }
+        
+        return ai_leaders.get(ticker, {
+            'category': 'AI Participant',
+            'strengths': ['AI integration', 'Digital transformation'],
+            'ai_revenue_percentage': '10-20%',
+            'moat': 'Moderate'
+        })
+    
+    def generate_projections(self, ticker: str, fundamentals: Dict, market_data: Dict) -> Dict:
+        """Generate 1-10 year projections based on analysis"""
+        try:
+            current_price = fundamentals.get('current_price')
+            if current_price == 'N/A' or current_price is None:
+                return {'error': 'No current price data'}
+            
+            price = float(current_price)
+            
+            # Base growth assumptions for AI stocks
+            ai_growth_scenarios = {
+                'conservative': 0.15,  # 15% annual growth
+                'moderate': 0.25,      # 25% annual growth
+                'aggressive': 0.40     # 40% annual growth
+            }
+            
+            # Adjust growth based on company positioning
+            company_data = self.get_company_ai_positioning(ticker)
+            moat = company_data.get('moat', 'Moderate')
+            
+            if moat == 'Very Strong':
+                multiplier = 1.2
+            elif moat == 'Strong':
+                multiplier = 1.1
+            else:
+                multiplier = 1.0
+            
+            projections = {}
+            
+            for scenario, base_growth in ai_growth_scenarios.items():
+                adjusted_growth = base_growth * multiplier
+                scenario_projections = {}
+                
+                for year in range(1, 11):
+                    # Add some volatility and market cycle adjustments
+                    cycle_adjustment = 1.0
+                    if year in [3, 7]:  # Potential market correction years
+                        cycle_adjustment = 0.9
+                    elif year in [5, 9]:  # Potential boom years
+                        cycle_adjustment = 1.1
+                    
+                    projected_price = price * ((1 + adjusted_growth) ** year) * cycle_adjustment
+                    scenario_projections[f'year_{year}'] = round(projected_price, 2)
+                
+                projections[scenario] = scenario_projections
+            
+            # Add key assumptions
+            projections['assumptions'] = {
+                'ai_market_growth': '25-30% annually',
+                'company_execution': 'Good',
+                'regulatory_impact': 'Manageable',
+                'competition': 'Increasing but manageable'
+            }
+            
+            return projections
+            
+        except Exception as e:
+            return {'error': f'Unable to generate projections: {e}'}
+    
+    def generate_recommendation(self, ticker: str, fundamentals: Dict, 
+                              news_sentiment: Dict, market_data: Dict,
+                              financial_health: Tuple[int, List[str]]) -> StockRecommendation:
+        """Generate buy/hold/sell recommendation"""
+        
+        health_score, health_reasoning = financial_health
+        
+        # Scoring system
+        buy_signals = 0
+        hold_signals = 0
+        sell_signals = 0
+        reasoning = []
+        
+        # Financial health scoring
+        if health_score >= 75:
+            buy_signals += 2
+            reasoning.append(f"Strong financial health (score: {health_score}/100)")
+        elif health_score >= 60:
+            hold_signals += 1
+            reasoning.append(f"Good financial health (score: {health_score}/100)")
+        elif health_score <= 40:
+            sell_signals += 2
+            reasoning.append(f"Weak financial health (score: {health_score}/100)")
+        
+        # News sentiment scoring
+        sentiment_score = news_sentiment.get('sentiment_score', 0)
+        if sentiment_score > 20:
+            buy_signals += 1
+            reasoning.append("Positive news sentiment")
+        elif sentiment_score < -20:
+            sell_signals += 1
+            reasoning.append("Negative news sentiment")
+        
+        # AI market positioning
+        company_positioning = self
