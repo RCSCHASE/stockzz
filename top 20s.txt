@@ -1,0 +1,613 @@
+#!/usr/bin/env python3
+"""
+20 Most Undervalued Companies Finder - June 13, 2025
+Using py-stocks package to find undervalued opportunities
+Enhanced with real-time data analysis and valuation metrics
+"""
+
+import sys
+import os
+sys.path.append('py-stocks')
+
+from Stock import Stock
+import pandas as pd
+import numpy as np
+from datetime import datetime
+import time
+import json
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import warnings
+warnings.filterwarnings('ignore')
+
+class UndervaluedStockFinder:
+    def __init__(self):
+        # Comprehensive list of stocks to analyze
+        # Including large cap, mid cap, and growth stocks
+        self.stock_universe = [
+            # Large Cap Value Candidates
+            'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'TSLA', 'META', 'NVDA', 'BRK-B',
+            'JNJ', 'JPM', 'V', 'PG', 'UNH', 'HD', 'MA', 'DIS', 'PYPL',
+            'NFLX', 'ADBE', 'CRM', 'TMO', 'ABBV', 'PFE', 'NKE', 'MRK',
+            'KO', 'PEP', 'WMT', 'COST', 'XOM', 'CVX', 'BAC', 'WFC',
+            
+            # Defense & Aerospace (Often Undervalued)
+            'LMT', 'BA', 'RTX', 'GD', 'NOC', 'TXT', 'HII', 'LDOS',
+            'KTOS', 'AJRD', 'CW', 'HXL', 'TGI',
+            
+            # Banking & Financial (Value Opportunities)
+            'JPM', 'BAC', 'WFC', 'C', 'GS', 'MS', 'USB', 'PNC',
+            'TFC', 'COF', 'AXP', 'BLK', 'SPGI', 'ICE',
+            
+            # Healthcare (Potential Value)
+            'JNJ', 'PFE', 'UNH', 'ABBV', 'TMO', 'DHR', 'BMY', 'MRK',
+            'GILD', 'AMGN', 'MDT', 'ABT', 'ISRG', 'SYK', 'BSX',
+            
+            # Energy (Often Undervalued)
+            'XOM', 'CVX', 'COP', 'EOG', 'SLB', 'MPC', 'VLO', 'PSX',
+            'KMI', 'OKE', 'WMB', 'EPD', 'ET',
+            
+            # Industrials
+            'CAT', 'GE', 'MMM', 'HON', 'UPS', 'FDX', 'LUV', 'DAL',
+            'UNP', 'CSX', 'NSC', 'CNI', 'CP',
+            
+            # Consumer Goods
+            'WMT', 'COST', 'TGT', 'LOW', 'SBUX', 'MCD', 'NKE', 'LULU',
+            'F', 'GM', 'TSLA', 'RIVN', 'LCID',
+            
+            # Technology (Value Opportunities)
+            'ORCL', 'IBM', 'INTC', 'QCOM', 'TXN', 'AVGO', 'AMAT', 'ADI',
+            'MU', 'KLAC', 'LRCX', 'MRVL', 'NXPI',
+            
+            # Real Estate & Utilities
+            'AMT', 'PLD', 'CCI', 'EQIX', 'SPG', 'O', 'REIT',
+            'NEE', 'DUK', 'SO', 'D', 'EXC', 'AEP', 'SRE',
+            
+            # Emerging Growth (Potential Value)
+            'PLTR', 'SNOW', 'CRWD', 'ZS', 'OKTA', 'NET', 'DDOG', 'MDB',
+            'ROKU', 'SQ', 'SHOP', 'UBER', 'LYFT', 'DOCU', 'ZM',
+            
+            # International ADRs
+            'TSM', 'ASML', 'NVO', 'SHEL', 'UL', 'NVS', 'SAP', 'TM'
+        ]
+        
+        self.results = {}
+        self.errors = {}
+        
+    def safe_get_metric(self, func, default=None):
+        """Safely execute function and return result or default"""
+        try:
+            result = func()
+            return result if result is not None else default
+        except:
+            return default
+    
+    def analyze_stock_valuation(self, ticker):
+        """Comprehensive valuation analysis for a single stock"""
+        print(f"🔍 Analyzing {ticker}...")
+        
+        try:
+            stock = Stock(ticker)
+            
+            # Basic metrics
+            data = {
+                'ticker': ticker,
+                'timestamp': datetime.now().isoformat(),
+                'analysis_date': '2025-06-13'
+            }
+            
+            # Company info
+            data['name'] = self.safe_get_metric(stock.get_name, 'N/A')
+            data['sector'] = self.safe_get_metric(stock.get_sector, 'N/A')
+            data['industry'] = self.safe_get_metric(stock.get_industry, 'N/A')
+            
+            # Price metrics
+            data['current_price'] = self.safe_get_metric(stock.get_current_price)
+            data['day_high'] = self.safe_get_metric(stock.get_day_high)
+            data['day_low'] = self.safe_get_metric(stock.get_day_low)
+            data['week52_high'] = self.safe_get_metric(stock.get_52week_high)
+            data['week52_low'] = self.safe_get_metric(stock.get_52week_low)
+            
+            # Volume metrics
+            data['volume'] = self.safe_get_metric(stock.get_volume)
+            data['avg_volume'] = self.safe_get_metric(stock.get_average_volume)
+            
+            # Dividend
+            data['dividend_yield'] = self.safe_get_metric(stock.get_dividend_yield, 0)
+            
+            # Calculate valuation metrics
+            self.calculate_valuation_metrics(data)
+            
+            # Get historical data for trend analysis
+            try:
+                historical_data = stock.get_last_month_data()
+                data['historical_available'] = True
+                data['price_trend'] = self.analyze_price_trend(historical_data)
+                data['volatility'] = self.calculate_volatility(historical_data)
+            except:
+                data['historical_available'] = False
+                data['price_trend'] = 'Unknown'
+                data['volatility'] = None
+            
+            # Calculate undervalued score
+            data['undervalued_score'] = self.calculate_undervalued_score(data)
+            
+            return data
+            
+        except Exception as e:
+            print(f"❌ Error analyzing {ticker}: {e}")
+            return None
+    
+    def calculate_valuation_metrics(self, data):
+        """Calculate key valuation indicators"""
+        current_price = data.get('current_price')
+        week52_high = data.get('week52_high')
+        week52_low = data.get('week52_low')
+        
+        if all(x is not None for x in [current_price, week52_high, week52_low]):
+            try:
+                # Distance from 52-week high (higher = more potential upside)
+                data['distance_from_high_pct'] = ((week52_high - current_price) / week52_high) * 100
+                
+                # Distance from 52-week low (lower = closer to bottom)
+                data['distance_from_low_pct'] = ((current_price - week52_low) / week52_low) * 100
+                
+                # Position in 52-week range (0-100, lower = potentially undervalued)
+                data['position_in_range'] = ((current_price - week52_low) / (week52_high - week52_low)) * 100
+                
+                # Price vs 52-week average
+                week52_avg = (week52_high + week52_low) / 2
+                data['vs_52week_avg'] = ((current_price - week52_avg) / week52_avg) * 100
+                
+            except:
+                data['distance_from_high_pct'] = None
+                data['distance_from_low_pct'] = None
+                data['position_in_range'] = None
+                data['vs_52week_avg'] = None
+        
+        # Volume analysis
+        volume = data.get('volume')
+        avg_volume = data.get('avg_volume')
+        
+        if volume and avg_volume:
+            try:
+                data['volume_ratio'] = volume / avg_volume
+                data['volume_signal'] = 'High' if data['volume_ratio'] > 1.5 else 'Normal' if data['volume_ratio'] > 0.5 else 'Low'
+            except:
+                data['volume_ratio'] = None
+                data['volume_signal'] = 'Unknown'
+    
+    def analyze_price_trend(self, historical_data):
+        """Analyze price trend from historical data"""
+        if historical_data is None or len(historical_data) < 5:
+            return 'Unknown'
+        
+        try:
+            closes = historical_data['Close'].values
+            if len(closes) < 5:
+                return 'Unknown'
+            
+            # Simple trend analysis
+            recent_avg = np.mean(closes[-5:])
+            older_avg = np.mean(closes[:5])
+            trend_pct = ((recent_avg - older_avg) / older_avg) * 100
+            
+            if trend_pct > 10:
+                return 'Strong Uptrend'
+            elif trend_pct > 3:
+                return 'Uptrend'
+            elif trend_pct < -10:
+                return 'Strong Downtrend'
+            elif trend_pct < -3:
+                return 'Downtrend'
+            else:
+                return 'Sideways'
+        except:
+            return 'Unknown'
+    
+    def calculate_volatility(self, historical_data):
+        """Calculate price volatility"""
+        if historical_data is None or len(historical_data) < 10:
+            return None
+        
+        try:
+            closes = historical_data['Close'].values
+            returns = np.diff(closes) / closes[:-1]
+            volatility = np.std(returns) * np.sqrt(252) * 100  # Annualized volatility %
+            return round(volatility, 2)
+        except:
+            return None
+    
+    def calculate_undervalued_score(self, data):
+        """Calculate undervaluation score (0-100, higher = more undervalued)"""
+        score = 0
+        
+        # Position in 52-week range (40 points max)
+        position = data.get('position_in_range')
+        if position is not None:
+            if position <= 20:  # Very close to 52-week low
+                score += 40
+            elif position <= 30:
+                score += 35
+            elif position <= 40:
+                score += 30
+            elif position <= 50:
+                score += 20
+            elif position <= 60:
+                score += 10
+        
+        # Distance from 52-week high (25 points max)
+        distance_from_high = data.get('distance_from_high_pct')
+        if distance_from_high is not None:
+            if distance_from_high >= 50:  # 50%+ below high
+                score += 25
+            elif distance_from_high >= 40:
+                score += 20
+            elif distance_from_high >= 30:
+                score += 15
+            elif distance_from_high >= 20:
+                score += 10
+            elif distance_from_high >= 10:
+                score += 5
+        
+        # Dividend yield bonus (15 points max)
+        dividend_yield = data.get('dividend_yield', 0) or 0
+        if dividend_yield > 0.05:  # 5%+
+            score += 15
+        elif dividend_yield > 0.03:  # 3-5%
+            score += 10
+        elif dividend_yield > 0.02:  # 2-3%
+            score += 5
+        
+        # Sector bonus (10 points max) - traditionally undervalued sectors
+        sector = data.get('sector', '').lower()
+        if any(s in sector for s in ['energy', 'financial', 'utility', 'real estate']):
+            score += 10
+        elif any(s in sector for s in ['industrial', 'material', 'consumer']):
+            score += 5
+        
+        # Volume signal (5 points max)
+        volume_signal = data.get('volume_signal')
+        if volume_signal == 'High':  # High volume might indicate institutional interest
+            score += 5
+        elif volume_signal == 'Normal':
+            score += 2
+        
+        # Trend penalty/bonus (adjust for current trend)
+        trend = data.get('price_trend', '')
+        if trend == 'Strong Downtrend':
+            score += 5  # Might be oversold
+        elif trend == 'Downtrend':
+            score += 3
+        elif trend == 'Strong Uptrend':
+            score -= 5  # Might be overbought
+        
+        # Volatility consideration
+        volatility = data.get('volatility')
+        if volatility is not None:
+            if volatility > 50:  # Very high volatility
+                score -= 5
+            elif volatility < 20:  # Low volatility
+                score += 3
+        
+        return min(100, max(0, score))
+    
+    def parallel_analysis(self, max_workers=15):
+        """Analyze stocks in parallel for faster processing"""
+        print(f"🚀 Starting parallel analysis of {len(self.stock_universe)} stocks...")
+        print(f"📅 Analysis Date: June 13, 2025")
+        print(f"⚡ Using {max_workers} parallel workers for faster processing")
+        print("=" * 70)
+        
+        start_time = time.time()
+        completed = 0
+        
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Submit all tasks
+            future_to_ticker = {
+                executor.submit(self.analyze_stock_valuation, ticker): ticker 
+                for ticker in self.stock_universe
+            }
+            
+            # Process completed tasks
+            for future in as_completed(future_to_ticker):
+                ticker = future_to_ticker[future]
+                completed += 1
+                
+                try:
+                    result = future.result()
+                    if result:
+                        self.results[ticker] = result
+                        score = result.get('undervalued_score', 0)
+                        price = result.get('current_price', 'N/A')
+                        print(f"✅ [{completed}/{len(self.stock_universe)}] {ticker}: ${price} (Score: {score})")
+                    else:
+                        self.errors[ticker] = "Analysis failed"
+                        print(f"❌ [{completed}/{len(self.stock_universe)}] {ticker}: Failed")
+                        
+                except Exception as e:
+                    self.errors[ticker] = str(e)
+                    print(f"❌ [{completed}/{len(self.stock_universe)}] {ticker}: {str(e)}")
+        
+        end_time = time.time()
+        print("\n" + "=" * 70)
+        print(f"⏱️ Analysis completed in {end_time - start_time:.1f} seconds")
+        print(f"✅ Successfully analyzed: {len(self.results)} stocks")
+        print(f"❌ Failed: {len(self.errors)} stocks")
+        
+        return self.results
+    
+    def get_top_undervalued_stocks(self, top_n=20):
+        """Get the top N most undervalued stocks"""
+        if not self.results:
+            return []
+        
+        # Sort by undervalued score
+        sorted_stocks = sorted(
+            self.results.items(), 
+            key=lambda x: x[1].get('undervalued_score', 0), 
+            reverse=True
+        )
+        
+        return sorted_stocks[:top_n]
+    
+    def print_detailed_report(self, top_stocks):
+        """Print detailed analysis report"""
+        print("\n" + "=" * 100)
+        print(f"📊 TOP 20 MOST UNDERVALUED COMPANIES - JUNE 13, 2025")
+        print("=" * 100)
+        print(f"📅 Analysis Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"📈 Total Stocks Analyzed: {len(self.results)}")
+        print(f"🎯 Undervaluation Methodology: 52-week position, dividend yield, sector analysis, volume signals")
+        
+        # Summary statistics
+        scores = [data['undervalued_score'] for _, data in top_stocks]
+        avg_score = sum(scores) / len(scores) if scores else 0
+        
+        print(f"\n📋 SUMMARY STATISTICS:")
+        print(f"   • Average Undervaluation Score: {avg_score:.1f}/100")
+        print(f"   • Highest Score: {max(scores):.1f}" if scores else "   • Highest Score: N/A")
+        print(f"   • Score Range: {min(scores):.1f} - {max(scores):.1f}" if scores else "   • Score Range: N/A")
+        
+        # Sector breakdown
+        sectors = {}
+        for _, data in top_stocks:
+            sector = data.get('sector', 'Unknown')
+            sectors[sector] = sectors.get(sector, 0) + 1
+        
+        print(f"\n🏭 SECTOR BREAKDOWN:")
+        for sector, count in sorted(sectors.items(), key=lambda x: x[1], reverse=True):
+            print(f"   • {sector}: {count} companies")
+        
+        print("\n" + "=" * 100)
+        print("🔍 DETAILED INDIVIDUAL ANALYSIS")
+        print("=" * 100)
+        
+        for rank, (ticker, data) in enumerate(top_stocks, 1):
+            self.print_individual_stock_analysis(rank, ticker, data)
+            if rank < len(top_stocks):
+                print("\n" + "-" * 80)
+    
+    def print_individual_stock_analysis(self, rank, ticker, data):
+        """Print detailed analysis for individual stock"""
+        score = data.get('undervalued_score', 0)
+        price = data.get('current_price', 'N/A')
+        name = data.get('name', 'N/A')
+        sector = data.get('sector', 'N/A')
+        
+        # Determine recommendation based on score
+        if score >= 80:
+            recommendation = "🟢 STRONG BUY"
+            emoji = "🚀"
+        elif score >= 70:
+            recommendation = "🟢 BUY"
+            emoji = "⬆️"
+        elif score >= 60:
+            recommendation = "🟡 MODERATE BUY"
+            emoji = "📈"
+        elif score >= 50:
+            recommendation = "🟡 CONSIDER"
+            emoji = "🤔"
+        else:
+            recommendation = "🟠 WATCH"
+            emoji = "👀"
+        
+        print(f"\n{emoji} #{rank}. {ticker} - {name}")
+        print(f"💰 Current Price: ${price:.2f}" if isinstance(price, (int, float)) else f"💰 Current Price: {price}")
+        print(f"🏢 Sector: {sector}")
+        print(f"📊 Undervaluation Score: {score:.1f}/100")
+        print(f"🎯 Recommendation: {recommendation}")
+        
+        # Key metrics
+        print(f"\n📈 KEY VALUATION METRICS:")
+        
+        position = data.get('position_in_range')
+        if position is not None:
+            print(f"   • 52-Week Range Position: {position:.1f}% (Lower = More Undervalued)")
+        
+        distance_high = data.get('distance_from_high_pct')
+        if distance_high is not None:
+            print(f"   • Distance from 52W High: {distance_high:.1f}% (Higher = More Upside)")
+        
+        distance_low = data.get('distance_from_low_pct')
+        if distance_low is not None:
+            print(f"   • Distance from 52W Low: {distance_low:.1f}%")
+        
+        vs_avg = data.get('vs_52week_avg')
+        if vs_avg is not None:
+            print(f"   • vs 52-Week Average: {vs_avg:+.1f}%")
+        
+        dividend = data.get('dividend_yield', 0) or 0
+        if dividend > 0:
+            print(f"   • Dividend Yield: {dividend:.2%}")
+        
+        volatility = data.get('volatility')
+        if volatility:
+            print(f"   • Volatility (Annualized): {volatility:.1f}%")
+        
+        trend = data.get('price_trend')
+        if trend != 'Unknown':
+            print(f"   • Recent Price Trend: {trend}")
+        
+        volume_signal = data.get('volume_signal')
+        if volume_signal:
+            print(f"   • Volume Signal: {volume_signal}")
+        
+        # Investment thesis
+        print(f"\n💡 INVESTMENT THESIS:")
+        thesis_points = []
+        
+        if position and position <= 30:
+            thesis_points.append(f"Trading near 52-week low ({position:.1f}% of range)")
+        
+        if distance_high and distance_high >= 30:
+            thesis_points.append(f"Significant upside potential ({distance_high:.1f}% below high)")
+        
+        if dividend > 0.03:
+            thesis_points.append(f"Attractive dividend yield ({dividend:.1%})")
+        
+        if sector.lower() in ['energy', 'financial', 'utility']:
+            thesis_points.append(f"Historically undervalued sector ({sector})")
+        
+        if trend in ['Downtrend', 'Strong Downtrend']:
+            thesis_points.append("Potential oversold condition - contrarian opportunity")
+        
+        if not thesis_points:
+            thesis_points.append("Multiple valuation metrics suggest undervaluation")
+        
+        for i, point in enumerate(thesis_points[:3], 1):
+            print(f"   {i}. {point}")
+        
+        # Risk factors
+        print(f"\n⚠️ RISK CONSIDERATIONS:")
+        risks = []
+        
+        if trend == 'Strong Downtrend':
+            risks.append("Strong negative momentum - timing risk")
+        
+        if volatility and volatility > 40:
+            risks.append(f"High volatility ({volatility:.1f}%) - increased risk")
+        
+        if volume_signal == 'Low':
+            risks.append("Low trading volume - liquidity concerns")
+        
+        if sector.lower() in ['energy', 'financial']:
+            risks.append(f"Sector-specific risks ({sector})")
+        
+        if not risks:
+            risks.append("Standard market and company-specific risks")
+        
+        for i, risk in enumerate(risks[:2], 1):
+            print(f"   {i}. {risk}")
+    
+    def export_results(self, top_stocks, format='csv'):
+        """Export results to file"""
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        
+        if format.lower() == 'csv':
+            filename = f"undervalued_stocks_june13_2025_{timestamp}.csv"
+            
+            # Prepare data for CSV
+            csv_data = []
+            for rank, (ticker, data) in enumerate(top_stocks, 1):
+                row = {
+                    'Rank': rank,
+                    'Ticker': ticker,
+                    'Company_Name': data.get('name', 'N/A'),
+                    'Current_Price': data.get('current_price', 'N/A'),
+                    'Sector': data.get('sector', 'N/A'),
+                    'Undervaluation_Score': data.get('undervalued_score', 0),
+                    '52W_Position_Pct': data.get('position_in_range'),
+                    'Distance_From_High_Pct': data.get('distance_from_high_pct'),
+                    'Distance_From_Low_Pct': data.get('distance_from_low_pct'),
+                    'Dividend_Yield': data.get('dividend_yield', 0),
+                    'Price_Trend': data.get('price_trend', 'Unknown'),
+                    'Volatility_Pct': data.get('volatility'),
+                    'Volume_Signal': data.get('volume_signal', 'Unknown'),
+                    'Analysis_Date': '2025-06-13'
+                }
+                csv_data.append(row)
+            
+            df = pd.DataFrame(csv_data)
+            df.to_csv(filename, index=False)
+            print(f"\n💾 Results exported to: {filename}")
+            return filename
+        
+        elif format.lower() == 'json':
+            filename = f"undervalued_stocks_june13_2025_{timestamp}.json"
+            
+            json_data = {
+                'analysis_date': '2025-06-13',
+                'generated_at': datetime.now().isoformat(),
+                'total_analyzed': len(self.results),
+                'top_20_undervalued': []
+            }
+            
+            for rank, (ticker, data) in enumerate(top_stocks, 1):
+                stock_data = data.copy()
+                stock_data['rank'] = rank
+                json_data['top_20_undervalued'].append(stock_data)
+            
+            with open(filename, 'w') as f:
+                json.dump(json_data, f, indent=2, default=str)
+            
+            print(f"\n💾 Results exported to: {filename}")
+            return filename
+
+def main():
+    """Main execution function"""
+    print("🔍 UNDERVALUED STOCKS FINDER - JUNE 13, 2025")
+    print("=" * 60)
+    print("📊 Features:")
+    print("   • Real-time stock data analysis using py-stocks package")
+    print("   • 52-week range positioning analysis")
+    print("   • Dividend yield consideration")
+    print("   • Sector-based valuation adjustments")
+    print("   • Volume and trend analysis")
+    print("   • Comprehensive scoring methodology")
+    print("\n🎯 Finding the 20 most undervalued companies...")
+    print("⏱️ This analysis will take 3-5 minutes...")
+    
+    # Initialize and run analysis
+    finder = UndervaluedStockFinder()
+    
+    # Run parallel analysis
+    results = finder.parallel_analysis(max_workers=15)
+    
+    if results:
+        # Get top 20 undervalued stocks
+        top_20 = finder.get_top_undervalued_stocks(20)
+        
+        if top_20:
+            # Print detailed report
+            finder.print_detailed_report(top_20)
+            
+            # Export results
+            print(f"\n💾 EXPORTING RESULTS...")
+            csv_file = finder.export_results(top_20, 'csv')
+            json_file = finder.export_results(top_20, 'json')
+            
+            print(f"\n✅ ANALYSIS COMPLETE!")
+            print(f"📊 Found 20 most undervalued companies as of June 13, 2025")
+            print(f"📈 Results exported to CSV and JSON formats")
+            
+            # Quick summary
+            if top_20:
+                top_ticker, top_data = top_20[0]
+                top_score = top_data.get('undervalued_score', 0)
+                top_price = top_data.get('current_price', 'N/A')
+                
+                print(f"\n🏆 TOP UNDERVALUED PICK:")
+                print(f"   • {top_ticker}: ${top_price} (Score: {top_score:.1f}/100)")
+            
+            print(f"\n⚠️ DISCLAIMER:")
+            print("This analysis is for educational purposes only.")
+            print("Always conduct your own research and consult with a financial advisor.")
+            print("Past performance does not guarantee future results.")
+            
+        else:
+            print("❌ No undervalued stocks found with current criteria.")
+    else:
+        print("❌ No data retrieved. Please check your internet connection and try again.")
+
+if __name__ == "__main__":
+    main()
